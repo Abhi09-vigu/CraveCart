@@ -1,0 +1,1200 @@
+import React, { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { apiFetch, resolveUploadUrl } from "../api";
+import { clearAuthSession } from "../roleUtils";
+import VerificationDashboard from "./admin/VerificationDashboard";
+import UsersDashboard from "./admin/UsersDashboard";
+import KitchensDashboard from "./admin/KitchensDashboard";
+import OrdersDashboard from "./admin/OrdersDashboard";
+import ComplaintsDashboard from "./admin/ComplaintsDashboard";
+import ReviewsDashboard from "./admin/ReviewsDashboard";
+import AnnouncementsDashboard from "./admin/AnnouncementsDashboard";
+import SubscriptionsDashboard from "./admin/SubscriptionsDashboard";
+import SettingsDashboard from "./admin/SettingsDashboard";
+
+const sections = [
+  { key: "overview", label: "Overview" },
+  { key: "verification", label: "Verification" },
+  { key: "users", label: "Users" },
+  { key: "kitchens", label: "Kitchens" },
+  { key: "orders", label: "Orders" },
+  { key: "complaints", label: "Complaints" },
+  { key: "reviews", label: "Reviews" },
+  { key: "announcements", label: "Announcements" },
+  { key: "subscriptions", label: "Subscriptions" },
+  { key: "settings", label: "Settings" },
+];
+
+const emptyAnnouncement = {
+  title: "",
+  body: "",
+  audience: "all",
+  status: "draft",
+  publishAt: "",
+  priority: "normal",
+};
+
+const emptyPlan = {
+  planType: "weekly",
+  mealsPerDay: 1,
+  price: "",
+  isActive: true,
+};
+
+const toText = (value) => {
+  if (value === null || typeof value === "undefined") return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+};
+
+const parseSettingValue = (value) => {
+  const text = String(value ?? "").trim();
+  if (!text) return "";
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+};
+
+const formatDateTime = (value) => {
+  if (!value) return "-";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString();
+};
+
+const AdminDashboard = ({ onLock }) => {
+  const navigate = useNavigate();
+
+  const handleLock = () => {
+    if (onLock) {
+      onLock();
+    } else {
+      clearAuthSession();
+      navigate("/admin");
+    }
+  };
+
+  const [activeSection, setActiveSection] = useState("overview");
+  const [refreshToken, setRefreshToken] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const [summary, setSummary] = useState(null);
+  const [users, setUsers] = useState([]);
+  const [kitchens, setKitchens] = useState([]);
+  const [orders, setOrders] = useState([]);
+  const [complaints, setComplaints] = useState([]);
+  const [reviews, setReviews] = useState([]);
+  const [announcements, setAnnouncements] = useState([]);
+  const [settings, setSettings] = useState([]);
+  const [plans, setPlans] = useState([]);
+  const [subscriptions, setSubscriptions] = useState([]);
+
+  const [selectedKitchen, setSelectedKitchen] = useState(null);
+  const [previewImage, setPreviewImage] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState("");
+  const [decisionLoading, setDecisionLoading] = useState(false);
+  const [decisionError, setDecisionError] = useState("");
+  const [rejectionReason, setRejectionReason] = useState("");
+
+  const [userQuery, setUserQuery] = useState("");
+  const [userStatusFilter, setUserStatusFilter] = useState("all");
+  const [kitchenQuery, setKitchenQuery] = useState("");
+  const [kitchenStatusFilter, setKitchenStatusFilter] = useState("all");
+  const [orderStatusFilter, setOrderStatusFilter] = useState("all");
+  const [complaintStatusFilter, setComplaintStatusFilter] = useState("all");
+  const [reviewQuery, setReviewQuery] = useState("");
+
+  const [announcementForm, setAnnouncementForm] = useState(emptyAnnouncement);
+  const [editingAnnouncementId, setEditingAnnouncementId] = useState("");
+  const [announcementSaving, setAnnouncementSaving] = useState(false);
+
+  const [planForm, setPlanForm] = useState(emptyPlan);
+  const [editingPlanId, setEditingPlanId] = useState("");
+  const [planSaving, setPlanSaving] = useState(false);
+
+  const [settingDrafts, setSettingDrafts] = useState({});
+
+  const [actionKey, setActionKey] = useState("");
+
+  const loadDashboard = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const requests = await Promise.allSettled([
+        apiFetch("/api/admin/summary"),
+        apiFetch("/api/admin/users?limit=300"),
+        apiFetch("/api/admin/kitchens?limit=300"),
+        apiFetch("/api/admin/orders?limit=200"),
+        apiFetch("/api/admin/complaints?limit=200"),
+        apiFetch("/api/admin/reviews?limit=200"),
+        apiFetch("/api/admin/announcements?limit=100"),
+        apiFetch("/api/admin/settings"),
+        apiFetch("/api/admin/subscription-plans"),
+        apiFetch("/api/admin/subscriptions?limit=200"),
+      ]);
+
+      const unwrap = (index, fallback) => (requests[index].status === "fulfilled" ? requests[index].value : fallback);
+
+      const summaryRes = unwrap(0, null);
+      const usersRes = unwrap(1, { users: [] });
+      const kitchensRes = unwrap(2, { kitchens: [] });
+      const ordersRes = unwrap(3, { orders: [] });
+      const complaintsRes = unwrap(4, { complaints: [] });
+      const reviewsRes = unwrap(5, { reviews: [] });
+      const announcementsRes = unwrap(6, { announcements: [] });
+      const settingsRes = unwrap(7, { settings: [] });
+      const plansRes = unwrap(8, { plans: [] });
+      const subscriptionsRes = unwrap(9, { subscriptions: [] });
+
+      setSummary(summaryRes?.summary || null);
+      setUsers(usersRes.users || []);
+      setKitchens(kitchensRes.kitchens || []);
+      setOrders(ordersRes.orders || []);
+      setComplaints(complaintsRes.complaints || []);
+      setReviews(reviewsRes.reviews || []);
+      setAnnouncements(announcementsRes.announcements || []);
+      setSettings(settingsRes.settings || []);
+      setPlans(plansRes.plans || []);
+      setSubscriptions(subscriptionsRes.subscriptions || []);
+
+      const settingMap = {};
+      (settingsRes.settings || []).forEach((setting) => {
+        settingMap[setting.key] = toText(setting.value);
+      });
+      setSettingDrafts(settingMap);
+
+      if (selectedKitchen?._id) {
+        const updatedKitchen = (kitchensRes.kitchens || []).find((item) => String(item._id) === String(selectedKitchen._id));
+        if (updatedKitchen) setSelectedKitchen(updatedKitchen);
+      }
+
+      const kitchenFromSelection = (kitchensRes.kitchens || []).find((item) => String(item._id) === String(selectedKitchen?._id));
+      if (kitchenFromSelection) {
+        setRejectionReason(kitchenFromSelection.verificationRejectedReason || "");
+      }
+    } catch (err) {
+      setError(err.message || "Failed to load admin dashboard");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadDashboard();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshToken]);
+
+  const reload = () => setRefreshToken((value) => value + 1);
+
+  const loadKitchenDetail = async (id) => {
+    setDetailLoading(true);
+    setDetailError("");
+    setDecisionError("");
+    try {
+      const res = await apiFetch(`/api/admin/kitchens/${id}`);
+      const kitchen = res.kitchen || null;
+      setSelectedKitchen(kitchen);
+      setRejectionReason(kitchen?.verificationRejectedReason || "");
+    } catch (err) {
+      setDetailError(err.message || "Failed to load kitchen details");
+      setSelectedKitchen(null);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  const saveKitchenDecision = async (decision) => {
+    if (!selectedKitchen) return;
+
+    setDecisionLoading(true);
+    setDecisionError("");
+    try {
+      if (decision === "rejected" && !rejectionReason.trim()) {
+        setDecisionError("Please enter a rejection reason before rejecting.");
+        return;
+      }
+
+      const res = await apiFetch(`/api/admin/kitchens/${selectedKitchen._id}/decision`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          decision,
+          reason: decision === "rejected" ? rejectionReason.trim() : undefined,
+        }),
+      });
+
+      setSelectedKitchen(res.kitchen || null);
+      setRejectionReason(res.kitchen?.verificationRejectedReason || "");
+      reload();
+    } catch (err) {
+      setDecisionError(err.message || "Failed to update status");
+    } finally {
+      setDecisionLoading(false);
+    }
+  };
+
+  const changeUserActivation = async (userId, isActivated) => {
+    setActionKey(`user-${userId}`);
+    try {
+      await apiFetch(`/api/admin/users/${userId}/status`, {
+        method: "PATCH",
+        body: JSON.stringify({ isActivated }),
+      });
+      reload();
+    } finally {
+      setActionKey("");
+    }
+  };
+
+  const changeKitchenSuspension = async (kitchenId, isActive) => {
+    setActionKey(`kitchen-${kitchenId}`);
+    setError("");
+    try {
+      await apiFetch(`/api/admin/kitchens/${kitchenId}/suspend`, {
+        method: "PATCH",
+        body: JSON.stringify({ isActive }),
+      });
+      reload();
+    } catch (err) {
+      setError(err.message || "Failed to change kitchen active state");
+      console.error("changeKitchenSuspension error:", err);
+    } finally {
+      setActionKey("");
+    }
+  };
+
+  const changeComplaintStatus = async (complaintId, status) => {
+    setActionKey(`complaint-${complaintId}`);
+    try {
+      await apiFetch(`/api/admin/complaints/${complaintId}/status`, {
+        method: "PATCH",
+        body: JSON.stringify({ status }),
+      });
+      reload();
+    } finally {
+      setActionKey("");
+    }
+  };
+
+  const deleteReview = async (reviewId) => {
+    setActionKey(`review-${reviewId}`);
+    try {
+      await apiFetch(`/api/admin/reviews/${reviewId}`, { method: "DELETE" });
+      reload();
+    } finally {
+      setActionKey("");
+    }
+  };
+
+  const saveAnnouncement = async () => {
+    setAnnouncementSaving(true);
+    try {
+      const payload = {
+        title: announcementForm.title.trim(),
+        body: announcementForm.body.trim(),
+        audience: announcementForm.audience,
+        status: announcementForm.status,
+        publishAt: announcementForm.publishAt || undefined,
+        priority: announcementForm.priority,
+      };
+
+      if (editingAnnouncementId) {
+        await apiFetch(`/api/admin/announcements/${editingAnnouncementId}`, {
+          method: "PATCH",
+          body: JSON.stringify(payload),
+        });
+      } else {
+        await apiFetch("/api/admin/announcements", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+      }
+
+      setAnnouncementForm(emptyAnnouncement);
+      setEditingAnnouncementId("");
+      reload();
+    } finally {
+      setAnnouncementSaving(false);
+    }
+  };
+
+  const editAnnouncement = (announcement) => {
+    setEditingAnnouncementId(announcement._id);
+    setAnnouncementForm({
+      title: announcement.title || "",
+      body: announcement.body || "",
+      audience: announcement.audience || "all",
+      status: announcement.status || "draft",
+      publishAt: announcement.publishAt ? String(announcement.publishAt).slice(0, 16) : "",
+      priority: announcement.priority || "normal",
+    });
+    setActiveSection("announcements");
+  };
+
+  const savePlan = async () => {
+    setPlanSaving(true);
+    try {
+      const payload = {
+        planType: planForm.planType,
+        mealsPerDay: Number(planForm.mealsPerDay),
+        price: Number(planForm.price),
+        isActive: Boolean(planForm.isActive),
+      };
+
+      if (editingPlanId) {
+        await apiFetch(`/api/admin/subscription-plans/${editingPlanId}`, {
+          method: "PATCH",
+          body: JSON.stringify(payload),
+        });
+      } else {
+        await apiFetch("/api/admin/subscription-plans", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+      }
+
+      setPlanForm(emptyPlan);
+      setEditingPlanId("");
+      reload();
+    } finally {
+      setPlanSaving(false);
+    }
+  };
+
+  const editPlan = (plan) => {
+    setEditingPlanId(plan._id);
+    setPlanForm({
+      planType: plan.planType || "weekly",
+      mealsPerDay: plan.mealsPerDay || 1,
+      price: plan.price ?? "",
+      isActive: plan.isActive !== false,
+    });
+    setActiveSection("subscriptions");
+  };
+
+  const saveSetting = async (key) => {
+    setActionKey(`setting-${key}`);
+    try {
+      await apiFetch(`/api/admin/settings/${encodeURIComponent(key)}`, {
+        method: "PUT",
+        body: JSON.stringify({ value: parseSettingValue(settingDrafts[key]) }),
+      });
+      reload();
+    } finally {
+      setActionKey("");
+    }
+  };
+
+  const filteredUsers = useMemo(() => {
+    const query = userQuery.trim().toLowerCase();
+    return users.filter((user) => {
+      if (user.role === "admin" || user.email === "cravecart05@gmail.com" || user.email === "saikausikimaddula80@gmail.com") return false;
+      if (userStatusFilter === "active" && !user.isActivated) return false;
+      if (userStatusFilter === "inactive" && user.isActivated) return false;
+      if (!query) return true;
+      return [user.name, user.email, user.role].filter(Boolean).join(" ").toLowerCase().includes(query);
+    });
+  }, [users, userQuery, userStatusFilter]);
+
+  const filteredKitchens = useMemo(() => {
+    const query = kitchenQuery.trim().toLowerCase();
+    return kitchens.filter((kitchen) => {
+      if (kitchenStatusFilter !== "all" && kitchen.verificationStatus !== kitchenStatusFilter) return false;
+      if (!query) return true;
+      const haystack = [
+        kitchen.name,
+        kitchen.description,
+        kitchen.addressText,
+        kitchen.pincode,
+        kitchen.ownerUserId?.name,
+        kitchen.ownerUserId?.email,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [kitchens, kitchenQuery, kitchenStatusFilter]);
+
+  const filteredOrders = useMemo(() => {
+    return orders.filter((order) => orderStatusFilter === "all" || order.status === orderStatusFilter);
+  }, [orders, orderStatusFilter]);
+
+  const filteredComplaints = useMemo(() => {
+    return complaints.filter((complaint) => complaintStatusFilter === "all" || complaint.status === complaintStatusFilter);
+  }, [complaints, complaintStatusFilter]);
+
+  const filteredReviews = useMemo(() => {
+    const query = reviewQuery.trim().toLowerCase();
+    return reviews.filter((review) => {
+      if (!query) return true;
+      const haystack = [review.userId?.name, review.userId?.email, review.kitchenId?.name, review.feedback, review.rating]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [reviews, reviewQuery]);
+
+  const pendingKitchens = useMemo(() => filteredKitchens.filter((kitchen) => kitchen.verificationStatus === "pending"), [filteredKitchens]);
+  const activeSubscriptions = useMemo(() => subscriptions.filter((sub) => sub.status === "active"), [subscriptions]);
+
+  return (
+    <div className="cc-page-lg">
+      <div className="cc-container space-y-6">
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div>
+            <p className="text-[#DC2626] text-sm uppercase tracking-wide">Admin</p>
+            <h1 className="text-3xl font-bold mt-1 text-[#1F2933]">Control Center</h1>
+            <p className="cc-muted mt-1">Platform overview, moderation, operations, and configuration.</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleLock}
+              className="px-4 py-2 rounded-xl border border-[#75070C]/30 text-[#75070C] bg-[#75070C]/5 text-sm font-semibold hover:bg-[#75070C]/10 transition flex items-center gap-1.5"
+            >
+              🔒 Lock Admin Console
+            </button>
+            <button
+              onClick={() => navigate("/")}
+              className="cc-btn-primary px-4 py-2 rounded-xl text-sm"
+            >
+              Back to Home
+            </button>
+          </div>
+        </div>
+
+        {loading ? (
+          <p className="cc-muted">Loading dashboard...</p>
+        ) : error ? (
+          <div className="cc-alert-error">{error}</div>
+        ) : null}
+
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          {[
+            { label: "Total users", value: summary?.users?.total ?? filteredUsers.length },
+            { label: "Total kitchens", value: summary?.kitchens?.active ?? kitchens.length },
+            { label: "Total orders", value: summary?.orders?.total ?? orders.length },
+            { label: "Pending approvals", value: summary?.kitchens?.pending ?? pendingKitchens.length },
+          ].map((card) => (
+            <div key={card.label} className="cc-card-pad">
+              <p className="text-sm font-semibold text-[#F97316]">{card.label}</p>
+              <h2 className="text-3xl font-bold mt-2 text-[#1F2933]">{card.value}</h2>
+            </div>
+          ))}
+          <div className="cc-card-pad xl:col-span-4">
+            <p className="text-sm font-semibold text-[#F97316]">Subscriptions</p>
+            <div className="mt-3 grid gap-3 md:grid-cols-3">
+              <div>
+                <p className="cc-muted text-sm">Plans</p>
+                <p className="text-xl font-semibold text-[#1F2933]">{plans.length}</p>
+              </div>
+              <div>
+                <p className="cc-muted text-sm">Active subscriptions</p>
+                <p className="text-xl font-semibold text-[#1F2933]">{activeSubscriptions.length}</p>
+              </div>
+              <div>
+                <p className="cc-muted text-sm">Open complaints</p>
+                <p className="text-xl font-semibold text-[#1F2933]">{summary?.complaints?.open ?? filteredComplaints.filter((item) => item.status === "open").length}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          {sections.map((section) => (
+            <button
+              key={section.key}
+              onClick={() => setActiveSection(section.key)}
+              className={`rounded-full px-4 py-2 text-sm font-semibold border transition ${
+                activeSection === section.key
+                  ? "bg-[#F97316] text-[#1F2933] border-[#F97316]/50"
+                  : "bg-white/70 text-[#1F2933] border-black/5 hover:bg-white"
+              }`}
+            >
+              {section.label}
+            </button>
+          ))}
+        </div>
+
+        {detailLoading ? <div className="cc-card-pad"><p className="cc-muted">Loading kitchen detail...</p></div> : null}
+        {detailError ? <div className="cc-card-pad border-[#B91C1C]/25 bg-[#B91C1C]/5 text-[#B91C1C]">{detailError}</div> : null}
+
+        {selectedKitchen && !detailLoading ? (
+          <div className="cc-card-pad space-y-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[#F97316] text-sm uppercase tracking-wide">Kitchen Detail</p>
+                <h3 className="text-2xl font-semibold text-[#1F2933]">{selectedKitchen.name}</h3>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <span
+                    className={`inline-flex items-center rounded-full px-3 py-1 text-sm font-semibold ${
+                      selectedKitchen.verificationStatus === "verified"
+                        ? "bg-[#15803D]/10 text-[#15803D]"
+                        : selectedKitchen.verificationStatus === "rejected"
+                          ? "bg-[#B91C1C]/10 text-[#B91C1C]"
+                          : "bg-[#F97316]/10 text-[#F97316]"
+                    }`}
+                  >
+                    {selectedKitchen.verificationStatus === "verified"
+                      ? "Reviewed: Verified"
+                      : selectedKitchen.verificationStatus === "rejected"
+                        ? "Reviewed: Rejected"
+                        : "Pending review"}
+                  </span>
+                  <p className="cc-muted">Status: {selectedKitchen.verificationStatus}</p>
+                </div>
+                <p className="cc-muted">Verified: {selectedKitchen.verified ? "Yes" : "No"}</p>
+              </div>
+              <button className="text-sm cc-muted hover:text-[#1F2933]" onClick={() => setSelectedKitchen(null)}>
+                Close
+              </button>
+            </div>
+
+            {decisionError ? <div className="cc-alert-error">{decisionError}</div> : null}
+
+            <div className="grid md:grid-cols-2 gap-4 text-sm text-[#1F2933]">
+              <div className="space-y-1">
+                <p className="font-semibold text-[#75070C]">Owner Details</p>
+                <p>
+                  <span className="text-[#6E5C52]">Name:</span>{" "}
+                  <strong className="text-[#1F2933]">
+                    {selectedKitchen.documents?.governmentId?.nameOnId ||
+                      selectedKitchen.ownerName ||
+                      (selectedKitchen.ownerUserId?.name && selectedKitchen.ownerUserId?.name !== "Admin"
+                        ? selectedKitchen.ownerUserId?.name
+                        : selectedKitchen.name || "-")}
+                  </strong>
+                </p>
+                <p>
+                  <span className="text-[#6E5C52]">Email:</span>{" "}
+                  <span className="font-medium">
+                    {selectedKitchen.contactEmail ||
+                      (selectedKitchen.ownerUserId?.email && selectedKitchen.ownerUserId?.email !== "cravecart05@gmail.com"
+                        ? selectedKitchen.ownerUserId?.email
+                        : selectedKitchen.contactEmail || "-")}
+                  </span>
+                </p>
+                <p>
+                  <span className="text-[#6E5C52]">Phone:</span>{" "}
+                  <span>{selectedKitchen.phone || selectedKitchen.contactPhone || selectedKitchen.ownerUserId?.phone || "-"}</span>
+                </p>
+                <p>
+                  <span className="text-[#6E5C52]">Role:</span>{" "}
+                  <span className="capitalize">{selectedKitchen.ownerUserId?.role === "admin" ? "Kitchen Owner (Admin Account)" : (selectedKitchen.ownerUserId?.role || "Kitchen Owner")}</span>
+                </p>
+                <p>
+                  <span className="text-[#6E5C52]">Joined:</span>{" "}
+                  <span>{selectedKitchen.ownerUserId?.createdAt ? formatDateTime(selectedKitchen.ownerUserId.createdAt) : "-"}</span>
+                </p>
+              </div>
+
+              <div className="space-y-1">
+                <p className="font-semibold">FSSAI</p>
+                <p>License: {selectedKitchen.fssai?.licenseNumber || "-"}</p>
+                <p>Business: {selectedKitchen.fssai?.businessName || "-"}</p>
+                <p>Expiry: {selectedKitchen.fssai?.expiryDate ? new Date(selectedKitchen.fssai.expiryDate).toLocaleDateString() : "-"}</p>
+                <p>Status: {selectedKitchen.fssai?.validationStatus || "-"}</p>
+              </div>
+            </div>
+
+            <div className="grid md:grid-cols-1 gap-4 text-sm text-[#1F2933]">
+              <div>
+                <p className="font-semibold mb-1">Contact</p>
+                <p>
+                  Phone: {selectedKitchen.phone || selectedKitchen.contactPhone || selectedKitchen.ownerUserId?.phone ? (
+                    <a className="cc-link underline" href={`tel:${selectedKitchen.phone || selectedKitchen.contactPhone || selectedKitchen.ownerUserId?.phone}`}>{selectedKitchen.phone || selectedKitchen.contactPhone || selectedKitchen.ownerUserId?.phone}</a>
+                  ) : (
+                    "-"
+                  )}
+                </p>
+              </div>
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-4 text-sm text-[#1F2933]">
+              <div>
+                <p className="font-semibold mb-2">Compliance Documents</p>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between p-3 rounded-xl border border-black/10 bg-white">
+                    <div>
+                      <span className="font-semibold text-xs block">FSSAI Certificate</span>
+                      <span className="text-[11px] cc-muted">Food Safety & Hygiene License</span>
+                    </div>
+                    {selectedKitchen.documents?.fssaiCertificate?.urlPath ? (
+                      <a
+                        className="px-3.5 py-1.5 rounded-lg bg-[#75070C] hover:bg-[#5E0509] !text-white text-xs font-semibold transition flex items-center gap-1.5 shadow-sm"
+                        style={{ color: "#ffffff", textDecoration: "none" }}
+                        href={resolveUploadUrl(selectedKitchen.documents.fssaiCertificate.urlPath)}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <span>📄</span>
+                        <span className="!text-white font-medium" style={{ color: "#ffffff" }}>Inspect Document ↗</span>
+                      </a>
+                    ) : (
+                      <span className="text-xs text-gray-400">Not uploaded</span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-between p-3 rounded-xl border border-black/10 bg-white">
+                    <div>
+                      <span className="font-semibold text-xs block">Government ID ({selectedKitchen.documents?.governmentId?.idType || "Aadhaar"})</span>
+                      <span className="text-[11px] cc-muted">Name on ID: {selectedKitchen.documents?.governmentId?.nameOnId || selectedKitchen.ownerUserId?.name || "-"}</span>
+                    </div>
+                    {selectedKitchen.documents?.governmentId?.urlPath ? (
+                      <a
+                        className="px-3.5 py-1.5 rounded-lg bg-[#75070C] hover:bg-[#5E0509] !text-white text-xs font-semibold transition flex items-center gap-1.5 shadow-sm"
+                        style={{ color: "#ffffff", textDecoration: "none" }}
+                        href={resolveUploadUrl(selectedKitchen.documents.governmentId.urlPath)}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <span>🪪</span>
+                        <span className="!text-white font-medium" style={{ color: "#ffffff" }}>Inspect ID ↗</span>
+                      </a>
+                    ) : (
+                      <span className="text-xs text-gray-400">Not uploaded</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <p className="font-semibold mb-2">Verification & Service Flags</p>
+                <ul className="list-disc list-inside space-y-1 text-xs">
+                  <li>Verification status: <strong>{selectedKitchen.verificationStatus || "-"}</strong></li>
+                  <li>Verification reason: {selectedKitchen.verificationRejectedReason || "-"}</li>
+                  <li>Pincode status: <strong>{selectedKitchen.pincodeVerificationStatus || "-"}</strong> (PIN: {selectedKitchen.pincode || "Not Set"})</li>
+                  <li>Video call: {selectedKitchen.videoCall?.status || "-"} {selectedKitchen.videoCall?.preferredSlotText ? `(${selectedKitchen.videoCall.preferredSlotText})` : ""}</li>
+                  <li>Trial order: {selectedKitchen.premiumVerification?.trialOrderStatus || "-"} {selectedKitchen.premiumVerification?.notes ? `(${selectedKitchen.premiumVerification.notes})` : ""}</li>
+                </ul>
+              </div>
+            </div>
+
+            {/* LIVE KITCHEN PHOTOS GALLERY */}
+            <div className="rounded-2xl border border-black/10 bg-white p-4">
+              <div className="flex items-center justify-between mb-3">
+                <p className="font-semibold text-sm text-[#1F2933]">
+                  Live Kitchen & Hygiene Photos ({selectedKitchen.documents?.kitchenPhotos?.length || 0})
+                </p>
+                <span className="text-xs cc-muted">Click any photo to view in full resolution</span>
+              </div>
+
+              {selectedKitchen.documents?.kitchenPhotos && selectedKitchen.documents.kitchenPhotos.length > 0 ? (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  {selectedKitchen.documents.kitchenPhotos.map((photo, index) => {
+                    const imgUrl = resolveUploadUrl(photo.urlPath);
+                    return (
+                      <div
+                        key={index}
+                        onClick={() => setPreviewImage(imgUrl)}
+                        className="group relative rounded-xl overflow-hidden border border-black/10 aspect-video bg-gray-100 cursor-pointer shadow-xs hover:border-[#75070C] transition"
+                      >
+                        <img
+                          src={imgUrl}
+                          alt={`Kitchen Photo ${index + 1}`}
+                          className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
+                        />
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition flex items-center justify-center text-white text-xs font-semibold gap-1">
+                          <span>🔍 Photo {index + 1}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-xs cc-muted py-4 text-center">No live cooking photos uploaded by this kitchen.</p>
+              )}
+            </div>
+
+            <div className="rounded-2xl border border-black/5 bg-white/60 p-4 text-sm text-[#1F2933]">
+              <p className="font-semibold mb-2">Review metadata</p>
+              <div className="grid gap-1 md:grid-cols-2">
+                <p>Reviewed at: {selectedKitchen.verifiedAt ? formatDateTime(selectedKitchen.verifiedAt) : "-"}</p>
+                <p>Verified badge: {selectedKitchen.verifiedBadge ? "Enabled" : "Disabled"}</p>
+                <p>Rejected reason: {selectedKitchen.verificationRejectedReason || "-"}</p>
+                <p>FSSAI validation: {selectedKitchen.fssai?.validationStatus || "-"}</p>
+              </div>
+            </div>
+
+            {/* DECISION & VERIFICATION CONTROLS (EDITABLE AT ANY TIME) */}
+            <div className="rounded-2xl border border-black/10 bg-white/80 p-5 shadow-xs">
+              <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
+                <div>
+                  <h4 className="font-semibold text-base text-[#1F2933] flex items-center gap-2">
+                    <span>⚖️</span>
+                    <span>Verification Decision & Status Management</span>
+                  </h4>
+                  <p className="text-xs cc-muted mt-0.5">
+                    You can approve, reject, or reverse any previous decision at any time if a mistake was made.
+                  </p>
+                </div>
+                <span
+                  className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-bold ${
+                    selectedKitchen.verificationStatus === "verified"
+                      ? "bg-[#15803D]/15 text-[#15803D] border border-[#15803D]/30"
+                      : selectedKitchen.verificationStatus === "rejected"
+                      ? "bg-[#B91C1C]/15 text-[#B91C1C] border border-[#B91C1C]/30"
+                      : "bg-[#F97316]/15 text-[#F97316] border border-[#F97316]/30"
+                  }`}
+                >
+                  Current Status:{" "}
+                  {selectedKitchen.verificationStatus === "verified"
+                    ? "✓ Approved / Verified"
+                    : selectedKitchen.verificationStatus === "rejected"
+                    ? "✗ Rejected"
+                    : "⏳ Pending Review"}
+                </span>
+              </div>
+
+              {selectedKitchen.verificationStatus === "rejected" && (
+                <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+                  <p className="font-semibold mb-1">⚠️ This kitchen is currently marked as Rejected.</p>
+                  <p>
+                    Rejection note on file:{" "}
+                    <strong>"{selectedKitchen.verificationRejectedReason || "No reason given"}"</strong>
+                  </p>
+                  <p className="mt-1 text-amber-800">
+                    If this kitchen was rejected by mistake, click <strong>"Approve & Mark as Verified"</strong> below to immediately correct the decision and enable the kitchen.
+                  </p>
+                </div>
+              )}
+
+              {selectedKitchen.verificationStatus === "verified" && (
+                <div className="mb-4 rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-xs text-emerald-900">
+                  <p className="font-semibold">✓ This kitchen is currently Approved & Verified on the marketplace.</p>
+                  <p className="text-emerald-800 mt-0.5">
+                    If you need to revoke approval, update the reason below and click "Reject / Revoke Verification".
+                  </p>
+                </div>
+              )}
+
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-[#6E5C52] mb-1">
+                    Rejection / Decision Notes (Required when rejecting)
+                  </label>
+                  <textarea
+                    value={rejectionReason}
+                    onChange={(e) => setRejectionReason(e.target.value)}
+                    placeholder="e.g. FSSAI document is expired, please re-upload valid license or contact admin."
+                    rows={2}
+                    className="w-full rounded-xl border border-black/15 bg-white px-3.5 py-2 text-sm text-[#1F2933] focus:outline-none focus:ring-2 focus:ring-[#75070C]/30 focus:border-[#75070C]"
+                  />
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3 pt-1">
+                  {/* APPROVE BUTTON */}
+                  <button
+                    disabled={decisionLoading || selectedKitchen.verificationStatus === "verified"}
+                    onClick={() => saveKitchenDecision("verified")}
+                    className="cc-btn-primary rounded-xl px-4 py-2 text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed shadow-xs"
+                  >
+                    {decisionLoading
+                      ? "Saving..."
+                      : selectedKitchen.verificationStatus === "rejected"
+                      ? "✓ Reverse Decision & Approve Kitchen"
+                      : "✓ Approve & Mark as Verified"}
+                  </button>
+
+                  {/* REJECT BUTTON */}
+                  <button
+                    disabled={decisionLoading}
+                    onClick={() => saveKitchenDecision("rejected")}
+                    className="cc-btn-danger rounded-xl px-4 py-2 text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed shadow-xs"
+                  >
+                    {decisionLoading
+                      ? "Saving..."
+                      : selectedKitchen.verificationStatus === "rejected"
+                      ? "Update Rejection Reason"
+                      : "✗ Reject Kitchen Application"}
+                  </button>
+
+                  {/* RESET TO PENDING BUTTON */}
+                  {selectedKitchen.verificationStatus !== "pending" && (
+                    <button
+                      disabled={decisionLoading}
+                      onClick={() => saveKitchenDecision("pending")}
+                      className="rounded-xl px-4 py-2 text-sm font-semibold border border-black/20 bg-white text-[#23120B] hover:bg-gray-50 transition disabled:opacity-50"
+                      title="Clear decision and send kitchen back to pending queue"
+                    >
+                      ⏳ Reset to Pending Review
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {activeSection === "overview" ? (
+          <div className="grid gap-6 lg:grid-cols-2">
+            <div className="cc-card-pad space-y-3">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div>
+                  <p className="text-sm font-semibold text-[#F97316]">Kitchen verification queue</p>
+                  <h2 className="text-xl font-semibold text-[#1F2933]">Pending approvals</h2>
+                </div>
+                <span className="rounded-full bg-[#F97316]/15 text-[#F97316] px-3 py-1 text-sm font-semibold">{pendingKitchens.length}</span>
+              </div>
+              <div className="space-y-3 max-h-[420px] overflow-auto pr-1">
+                {pendingKitchens.length === 0 ? <p className="cc-muted">No kitchens waiting for approval.</p> : pendingKitchens.map((kitchen) => (
+                  <div key={kitchen._id} className="border border-black/5 rounded-xl px-4 py-3 bg-white/70 flex items-center justify-between gap-3 flex-wrap">
+                    <div>
+                      <p className="font-semibold text-[#1F2933]">{kitchen.name}</p>
+                      <p className="text-sm cc-muted">
+                        Owner: {kitchen.documents?.governmentId?.nameOnId || kitchen.ownerName || (kitchen.ownerUserId?.name && kitchen.ownerUserId?.name !== "Admin" ? kitchen.ownerUserId?.name : "") || "Applicant"} • {kitchen.contactEmail || (kitchen.ownerUserId?.email !== "cravecart05@gmail.com" ? kitchen.ownerUserId?.email : "") || "-"}
+                      </p>
+                      <p className="text-xs cc-muted mt-0.5">Status: {kitchen.verificationStatus}</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button className="cc-btn-primary rounded-lg px-3 py-1.5 text-xs" onClick={() => loadKitchenDetail(kitchen._id)}>
+                        Inspect
+                      </button>
+                      <button className="rounded-lg px-3 py-1.5 text-xs font-semibold bg-amber-50 text-amber-900 border border-amber-300 hover:bg-amber-100 transition shadow-xs" onClick={() => loadKitchenDetail(kitchen._id)}>
+                        ✏️ Edit Decision
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="cc-card-pad space-y-3">
+              <p className="text-sm font-semibold text-[#F97316]">Platform snapshot</p>
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="rounded-xl border border-black/5 bg-white/70 p-4"><p className="cc-muted text-sm">Verified kitchens</p><p className="text-2xl font-semibold text-[#1F2933]">{summary?.kitchens?.verified ?? kitchens.filter((item) => item.verificationStatus === "verified").length}</p></div>
+                <div className="rounded-xl border border-black/5 bg-white/70 p-4"><p className="cc-muted text-sm">Rejected kitchens</p><p className="text-2xl font-semibold text-[#1F2933]">{summary?.kitchens?.rejected ?? kitchens.filter((item) => item.verificationStatus === "rejected").length}</p></div>
+                <div className="rounded-xl border border-black/5 bg-white/70 p-4"><p className="cc-muted text-sm">Open complaints</p><p className="text-2xl font-semibold text-[#1F2933]">{summary?.complaints?.open ?? complaints.filter((item) => item.status === "open").length}</p></div>
+                <div className="rounded-xl border border-black/5 bg-white/70 p-4"><p className="cc-muted text-sm">Active users</p><p className="text-2xl font-semibold text-[#1F2933]">{summary?.users?.active ?? filteredUsers.filter((item) => item.isActivated).length}</p></div>
+              </div>
+              <p className="cc-muted text-sm">Use the tabs below to manage each area of the platform.</p>
+            </div>
+          </div>
+        ) : null}
+
+        {activeSection === "verification" ? (
+          <VerificationDashboard
+            kitchens={filteredKitchens}
+            loadKitchenDetail={loadKitchenDetail}
+            kitchenQuery={kitchenQuery}
+            setKitchenQuery={setKitchenQuery}
+            kitchenStatusFilter={kitchenStatusFilter}
+            setKitchenStatusFilter={setKitchenStatusFilter}
+            actionKey={actionKey}
+          />
+        ) : null}
+
+        {activeSection === "users" ? (
+          <UsersDashboard
+            users={users}
+            filteredUsers={filteredUsers}
+            userQuery={userQuery}
+            setUserQuery={setUserQuery}
+            userStatusFilter={userStatusFilter}
+            setUserStatusFilter={setUserStatusFilter}
+            changeUserActivation={changeUserActivation}
+            actionKey={actionKey}
+          />
+        ) : null}
+
+        {activeSection === "kitchens" ? (
+          <KitchensDashboard
+            kitchens={kitchens}
+            filteredKitchens={filteredKitchens}
+            kitchenQuery={kitchenQuery}
+            setKitchenQuery={setKitchenQuery}
+            kitchenStatusFilter={kitchenStatusFilter}
+            setKitchenStatusFilter={setKitchenStatusFilter}
+            loadKitchenDetail={loadKitchenDetail}
+            changeKitchenSuspension={changeKitchenSuspension}
+            actionKey={actionKey}
+          />
+        ) : null}
+
+        {activeSection === "orders" ? (
+          <div className="cc-card-pad space-y-4">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div>
+                <p className="text-sm font-semibold text-[#F97316]">Order Monitoring</p>
+                <h2 className="text-xl font-semibold text-[#1F2933]">View all orders and track status</h2>
+              </div>
+              <select value={orderStatusFilter} onChange={(e) => setOrderStatusFilter(e.target.value)} className="px-4 py-2 rounded-xl border border-black/10 bg-white text-sm">
+                <option value="all">All statuses</option>
+                <option value="prebooked">Prebooked</option>
+                <option value="accepted">Accepted</option>
+                <option value="rejected">Rejected</option>
+                <option value="cancelled">Cancelled</option>
+                <option value="fulfilled">Fulfilled</option>
+              </select>
+            </div>
+            <div className="space-y-3 max-h-[520px] overflow-auto pr-1">
+              {filteredOrders.length === 0 ? <p className="cc-muted">No orders found.</p> : filteredOrders.map((order) => (
+                <div key={order._id} className="border border-black/5 rounded-xl px-4 py-3 bg-white/70">
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <div>
+                      <p className="font-semibold text-[#1F2933]">{order.kitchenId?.name || "Kitchen"}</p>
+                      <p className="text-sm cc-muted">User: {order.userId?.email || order.userId?.name || "-"}</p>
+                      <p className="text-sm cc-muted">Meal: {order.mealId?.title || "-"} | Status: {order.status}</p>
+                    </div>
+                    <div className="text-sm cc-muted text-right">
+                      <p>Date: {order.date ? new Date(order.date).toLocaleDateString() : "-"}</p>
+                      <p>Created: {formatDateTime(order.createdAt)}</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {activeSection === "complaints" ? (
+          <div className="cc-card-pad space-y-4">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div>
+                <p className="text-sm font-semibold text-[#F97316]">Complaint & Report Section</p>
+                <h2 className="text-xl font-semibold text-[#1F2933]">Review and resolve platform reports</h2>
+              </div>
+              <select value={complaintStatusFilter} onChange={(e) => setComplaintStatusFilter(e.target.value)} className="px-4 py-2 rounded-xl border border-black/10 bg-white text-sm">
+                <option value="all">All statuses</option>
+                <option value="open">Open</option>
+                <option value="investigating">Investigating</option>
+                <option value="resolved">Resolved</option>
+                <option value="rejected">Rejected</option>
+              </select>
+            </div>
+            <div className="space-y-3 max-h-[520px] overflow-auto pr-1">
+              {filteredComplaints.length === 0 ? <p className="cc-muted">No complaints found.</p> : filteredComplaints.map((complaint) => (
+                <div key={complaint._id} className="border border-black/5 rounded-xl px-4 py-3 bg-white/70 space-y-2">
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <div>
+                      <p className="font-semibold text-[#1F2933]">{complaint.category || complaint.type}</p>
+                      <p className="text-sm cc-muted">Reporter: {complaint.reporterUserId?.email || complaint.reporterUserId?.name || "-"}</p>
+                      <p className="text-sm cc-muted">Kitchen: {complaint.kitchenId?.name || "-"} | Order: {complaint.orderId?.status || "-"}</p>
+                    </div>
+                    <span className="rounded-full bg-[#F97316]/10 text-[#F97316] px-3 py-1 text-xs font-semibold">{complaint.status}</span>
+                  </div>
+                  <p className="text-sm text-[#1F2933]">{complaint.message}</p>
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      ["open", "Open"],
+                      ["investigating", "Investigate"],
+                      ["resolved", "Resolve"],
+                      ["rejected", "Reject"],
+                    ].map(([value, label]) => (
+                      <button key={value} className="rounded-lg px-3 py-1 text-sm border border-black/10 bg-white" onClick={() => changeComplaintStatus(complaint._id, value)} disabled={actionKey === `complaint-${complaint._id}`}>{label}</button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {activeSection === "reviews" ? (
+          <div className="cc-card-pad space-y-4">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div>
+                <p className="text-sm font-semibold text-[#F97316]">Reviews & Ratings Management</p>
+                <h2 className="text-xl font-semibold text-[#1F2933]">Monitor fake or abusive reviews</h2>
+              </div>
+              <input value={reviewQuery} onChange={(e) => setReviewQuery(e.target.value)} placeholder="Search reviews..." className="px-4 py-2 rounded-xl border border-black/10 bg-white text-sm" />
+            </div>
+            <div className="space-y-3 max-h-[520px] overflow-auto pr-1">
+              {filteredReviews.length === 0 ? <p className="cc-muted">No reviews found.</p> : filteredReviews.map((review) => (
+                <div key={review._id} className="border border-black/5 rounded-xl px-4 py-3 bg-white/70 space-y-2">
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <div>
+                      <p className="font-semibold text-[#1F2933]">{review.kitchenId?.name || "Kitchen"} | Rating: {review.rating}</p>
+                      <p className="text-sm cc-muted">By: {review.userId?.email || review.userId?.name || "-"}</p>
+                    </div>
+                    <button className="rounded-lg px-3 py-1 text-sm border border-[#B91C1C]/20 bg-[#B91C1C]/5 text-[#B91C1C]" onClick={() => deleteReview(review._id)} disabled={actionKey === `review-${review._id}`}>Delete</button>
+                  </div>
+                  <p className="text-sm text-[#1F2933]">{review.feedback || "No feedback provided."}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {activeSection === "announcements" ? (
+          <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+            <div className="cc-card-pad space-y-4">
+              <div>
+                <p className="text-sm font-semibold text-[#F97316]">Announcement / Notification Section</p>
+                <h2 className="text-xl font-semibold text-[#1F2933]">Send updates to users or kitchens</h2>
+              </div>
+              <div className="grid gap-3">
+                <input value={announcementForm.title} onChange={(e) => setAnnouncementForm((prev) => ({ ...prev, title: e.target.value }))} placeholder="Title" className="px-4 py-2 rounded-xl border border-black/10 bg-white text-sm" />
+                <textarea value={announcementForm.body} onChange={(e) => setAnnouncementForm((prev) => ({ ...prev, body: e.target.value }))} placeholder="Announcement body" rows={4} className="px-4 py-2 rounded-xl border border-black/10 bg-white text-sm" />
+                <div className="grid md:grid-cols-2 gap-3">
+                  <select value={announcementForm.audience} onChange={(e) => setAnnouncementForm((prev) => ({ ...prev, audience: e.target.value }))} className="px-4 py-2 rounded-xl border border-black/10 bg-white text-sm">
+                    <option value="all">All</option>
+                    <option value="customers">Customers</option>
+                    <option value="kitchens">Kitchens</option>
+                    <option value="admins">Admins</option>
+                  </select>
+                  <select value={announcementForm.status} onChange={(e) => setAnnouncementForm((prev) => ({ ...prev, status: e.target.value }))} className="px-4 py-2 rounded-xl border border-black/10 bg-white text-sm">
+                    <option value="draft">Draft</option>
+                    <option value="scheduled">Scheduled</option>
+                    <option value="published">Published</option>
+                    <option value="archived">Archived</option>
+                  </select>
+                  <select value={announcementForm.priority} onChange={(e) => setAnnouncementForm((prev) => ({ ...prev, priority: e.target.value }))} className="px-4 py-2 rounded-xl border border-black/10 bg-white text-sm">
+                    <option value="low">Low</option>
+                    <option value="normal">Normal</option>
+                    <option value="high">High</option>
+                  </select>
+                  <input type="datetime-local" value={announcementForm.publishAt} onChange={(e) => setAnnouncementForm((prev) => ({ ...prev, publishAt: e.target.value }))} className="px-4 py-2 rounded-xl border border-black/10 bg-white text-sm" />
+                </div>
+                <div className="flex gap-3 flex-wrap">
+                  <button className="cc-btn-primary rounded-lg px-4 py-2" onClick={saveAnnouncement} disabled={announcementSaving}>{announcementSaving ? "Saving..." : editingAnnouncementId ? "Update announcement" : "Create announcement"}</button>
+                  {editingAnnouncementId ? <button className="cc-btn-secondary rounded-lg px-4 py-2" onClick={() => { setEditingAnnouncementId(""); setAnnouncementForm(emptyAnnouncement); }}>Cancel edit</button> : null}
+                </div>
+              </div>
+            </div>
+
+            <div className="cc-card-pad space-y-3 max-h-[740px] overflow-auto">
+              <p className="font-semibold text-[#1F2933]">Recent announcements</p>
+              {announcements.length === 0 ? <p className="cc-muted">No announcements yet.</p> : announcements.map((announcement) => (
+                <div key={announcement._id} className="border border-black/5 rounded-xl px-4 py-3 bg-white/70 space-y-2">
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <div>
+                      <p className="font-semibold text-[#1F2933]">{announcement.title}</p>
+                      <p className="text-sm cc-muted">Audience: {announcement.audience} | Status: {announcement.status} | Priority: {announcement.priority}</p>
+                    </div>
+                    <button className="cc-btn-primary rounded-lg px-3 py-1 text-sm" onClick={() => editAnnouncement(announcement)}>Edit</button>
+                  </div>
+                  <p className="text-sm text-[#1F2933] whitespace-pre-wrap">{announcement.body}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {activeSection === "subscriptions" ? (
+          <div className="grid gap-6 lg:grid-cols-[0.95fr_1.05fr]">
+            <div className="cc-card-pad space-y-4">
+              <div>
+                <p className="text-sm font-semibold text-[#F97316]">Subscription & Payment Management</p>
+                <h2 className="text-xl font-semibold text-[#1F2933]">Manage plans and active subscriptions</h2>
+              </div>
+              <div className="grid gap-3">
+                <select value={planForm.planType} onChange={(e) => setPlanForm((prev) => ({ ...prev, planType: e.target.value }))} className="px-4 py-2 rounded-xl border border-black/10 bg-white text-sm">
+                  <option value="weekly">Weekly</option>
+                  <option value="monthly">Monthly</option>
+                </select>
+                <input type="number" min={1} max={3} value={planForm.mealsPerDay} onChange={(e) => setPlanForm((prev) => ({ ...prev, mealsPerDay: e.target.value }))} className="px-4 py-2 rounded-xl border border-black/10 bg-white text-sm" placeholder="Meals per day" />
+                <input type="number" min={0} value={planForm.price} onChange={(e) => setPlanForm((prev) => ({ ...prev, price: e.target.value }))} className="px-4 py-2 rounded-xl border border-black/10 bg-white text-sm" placeholder="Price" />
+                <label className="flex items-center gap-2 text-sm text-[#1F2933]"><input type="checkbox" checked={planForm.isActive} onChange={(e) => setPlanForm((prev) => ({ ...prev, isActive: e.target.checked }))} /> Active</label>
+                <div className="flex gap-3 flex-wrap">
+                  <button className="cc-btn-primary rounded-lg px-4 py-2" onClick={savePlan} disabled={planSaving}>{planSaving ? "Saving..." : editingPlanId ? "Update plan" : "Create plan"}</button>
+                  {editingPlanId ? <button className="cc-btn-secondary rounded-lg px-4 py-2" onClick={() => { setEditingPlanId(""); setPlanForm(emptyPlan); }}>Cancel edit</button> : null}
+                </div>
+              </div>
+            </div>
+
+            <div className="cc-card-pad space-y-4 max-h-[740px] overflow-auto">
+              <p className="font-semibold text-[#1F2933]">Plan catalog</p>
+              {plans.length === 0 ? <p className="cc-muted">No plans found.</p> : plans.map((plan) => (
+                <div key={plan._id} className="border border-black/5 rounded-xl px-4 py-3 bg-white/70 flex items-center justify-between gap-3 flex-wrap">
+                  <div>
+                    <p className="font-semibold text-[#1F2933]">{plan.planType} | {plan.mealsPerDay} meals/day</p>
+                    <p className="text-sm cc-muted">Price: ₹{plan.price} | Active: {plan.isActive ? "Yes" : "No"}</p>
+                  </div>
+                  <div className="flex gap-2 flex-wrap">
+                    <button className="cc-btn-primary rounded-lg px-3 py-1 text-sm" onClick={() => editPlan(plan)}>Edit</button>
+                    <button className="rounded-lg px-3 py-1 text-sm border border-[#B91C1C]/20 bg-[#B91C1C]/5 text-[#B91C1C]" onClick={() => apiFetch(`/api/admin/subscription-plans/${plan._id}`, { method: "PATCH", body: JSON.stringify({ isActive: !plan.isActive }) }).then(reload)}>
+                      {plan.isActive ? "Disable" : "Enable"}
+                    </button>
+                  </div>
+                </div>
+              ))}
+
+              <div className="pt-2 border-t border-black/5">
+                <p className="font-semibold text-[#1F2933] mb-2">Active subscriptions</p>
+                {subscriptions.length === 0 ? <p className="cc-muted">No subscriptions found.</p> : subscriptions.map((subscription) => (
+                  <div key={subscription._id} className="border border-black/5 rounded-xl px-4 py-3 bg-white/70 mb-3">
+                    <p className="font-semibold text-[#1F2933]">{subscription.userId?.email || subscription.userId?.name || "User"}</p>
+                    <p className="text-sm cc-muted">Plan: {subscription.planId?.planType || "-"} | {subscription.planId?.mealsPerDay || "-"} meals/day | ₹{subscription.planId?.price ?? "-"}</p>
+                    <p className="text-sm cc-muted">Status: {subscription.status} | Start: {subscription.startDate ? new Date(subscription.startDate).toLocaleDateString() : "-"} | End: {subscription.endDate ? new Date(subscription.endDate).toLocaleDateString() : "-"}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {activeSection === "settings" ? (
+          <div className="cc-card-pad space-y-4">
+            <div>
+              <p className="text-sm font-semibold text-[#F97316]">Platform Settings</p>
+              <h2 className="text-xl font-semibold text-[#1F2933]">Key/value configuration</h2>
+            </div>
+            <div className="space-y-3">
+              {settings.length === 0 ? <p className="cc-muted">No settings configured.</p> : settings.map((setting) => (
+                <div key={setting._id} className="grid gap-3 md:grid-cols-[220px_1fr_auto] items-start border border-black/5 rounded-xl px-4 py-3 bg-white/70">
+                  <div>
+                    <p className="font-semibold text-[#1F2933]">{setting.key}</p>
+                    <p className="text-xs cc-muted">Updated: {formatDateTime(setting.updatedAt)}</p>
+                  </div>
+                  <textarea
+                    value={settingDrafts[setting.key] ?? ""}
+                    onChange={(e) => setSettingDrafts((prev) => ({ ...prev, [setting.key]: e.target.value }))}
+                    rows={2}
+                    className="w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm text-[#1F2933]"
+                  />
+                  <button
+                    className="cc-btn-primary rounded-lg px-4 py-2"
+                    onClick={() => saveSetting(setting.key)}
+                    disabled={actionKey === `setting-${setting.key}`}
+                  >
+                    Save
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+        {/* PHOTO LIGHTBOX MODAL */}
+        {previewImage ? (
+          <div
+            onClick={() => setPreviewImage(null)}
+            className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 cursor-pointer"
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="relative max-w-4xl w-full bg-[#FAF6F0] rounded-2xl overflow-hidden p-3 shadow-2xl"
+            >
+              <div className="flex items-center justify-between pb-2 mb-2 border-b border-black/10">
+                <span className="font-semibold text-sm text-[#1F2933]">Kitchen Photo Inspection</span>
+                <button
+                  onClick={() => setPreviewImage(null)}
+                  className="h-8 w-8 rounded-full bg-black/5 hover:bg-black/10 flex items-center justify-center text-sm font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="max-h-[80vh] overflow-auto flex items-center justify-center bg-black/5 rounded-xl">
+                <img
+                  src={previewImage}
+                  alt="Enlarged Kitchen Preview"
+                  className="max-h-[75vh] w-auto object-contain rounded-lg"
+                />
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+};
+
+export default AdminDashboard;
